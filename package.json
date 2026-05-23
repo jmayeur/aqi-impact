@@ -1,0 +1,24 @@
+{
+  "name": "aqi-impact",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "fetch": "tsx scripts/fetch-and-score.ts",
+    "inspect": "tsx scripts/fetch-and-score.ts --inspect",
+    "score": "tsx scripts/score-from-sqlite.ts",
+    "backfill": "tsx scripts/backfill.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  },
+  "dependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "better-sqlite3": "^12.10.0"
+  }
+}

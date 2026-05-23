@@ -1,0 +1,16 @@
+{
+  "name": "aqi-impact-site",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview"
+  },
+  "dependencies": {
+    "@types/leaflet": "^1.9.21",
+    "astro": "^5.7.0",
+    "leaflet": "^1.9.4"
+  }
+}

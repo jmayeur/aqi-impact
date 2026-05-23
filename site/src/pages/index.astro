@@ -1,0 +1,434 @@
+---
+const SCORES_BASE = import.meta.env.PUBLIC_SCORES_BASE ?? "";
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Outdoor AQI</title>
+    <style>
+      :root {
+        --bg: #0f172a;
+        --surface: #1e293b;
+        --text: #f1f5f9;
+        --muted: #94a3b8;
+        --border: #334155;
+      }
+
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+
+      body {
+        font-family: system-ui, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        min-height: 100dvh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 2rem 1rem 3rem;
+        gap: 1.25rem;
+      }
+
+      /* ── Header + nav ── */
+      header {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 0.75rem;
+        width: 100%;
+        max-width: 480px;
+      }
+
+      header h1 {
+        font-size: 1rem;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--muted);
+        text-align: center;
+        min-height: 1.4em; /* prevent layout shift while loading */
+      }
+
+      .nav-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        width: 100%;
+        gap: 0.5rem;
+      }
+
+      .nav-btn {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        color: var(--text);
+        border-radius: 0.5rem;
+        padding: 0.4rem 0.9rem;
+        font-size: 0.85rem;
+        cursor: pointer;
+        transition: opacity 0.15s;
+        flex-shrink: 0;
+      }
+      .nav-btn:disabled {
+        opacity: 0.3;
+        cursor: default;
+      }
+      .nav-btn:not(:disabled):hover {
+        background: #2d3f55;
+      }
+
+      .nav-date {
+        font-size: 0.78rem;
+        color: var(--muted);
+        text-align: center;
+        flex: 1;
+      }
+
+      /* ── Stale banner ── */
+      #stale-banner {
+        display: none;
+        width: 100%;
+        max-width: 480px;
+        background: #451a03;
+        border: 1px solid #92400e;
+        border-radius: 0.5rem;
+        padding: 0.6rem 1rem;
+        font-size: 0.82rem;
+        color: #fde68a;
+        text-align: center;
+      }
+
+      /* ── Score card ── */
+      .card {
+        background: var(--surface);
+        border-radius: 1rem;
+        padding: 2rem 2.5rem;
+        width: 100%;
+        max-width: 480px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 0.4rem;
+      }
+
+      #score-value {
+        font-size: 6rem;
+        font-weight: 800;
+        line-height: 1;
+        color: #4ade80;
+        transition: color 0.3s;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .score-label {
+        font-size: 0.85rem;
+        color: var(--muted);
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+
+      #breakdown {
+        width: 100%;
+        margin-top: 1.2rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.35rem;
+      }
+
+      .breakdown-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 0.78rem;
+      }
+
+      .breakdown-dot {
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        margin-right: 0.45rem;
+        flex-shrink: 0;
+      }
+
+      .breakdown-name {
+        display: flex;
+        align-items: center;
+        color: var(--muted);
+      }
+
+      .breakdown-mins { color: var(--text); font-variant-numeric: tabular-nums; }
+
+      #meta {
+        font-size: 0.72rem;
+        color: var(--muted);
+        text-align: center;
+        line-height: 1.8;
+        margin-top: 0.5rem;
+      }
+
+      /* ── Map ── */
+      #map {
+        width: 100%;
+        max-width: 480px;
+        height: 240px;
+        border-radius: 0.75rem;
+        overflow: hidden;
+        border: 1px solid var(--border);
+      }
+
+      /* ── States ── */
+      #loading { color: var(--muted); font-size: 0.9rem; }
+      #no-data {
+        display: none;
+        color: var(--muted);
+        font-size: 0.85rem;
+        text-align: center;
+        padding: 1rem;
+      }
+
+      .hidden { display: none !important; }
+    </style>
+  </head>
+
+  <body>
+    <header>
+      <h1 id="page-title">Outdoor AQI</h1>
+      <div class="nav-row">
+        <button class="nav-btn" id="btn-prev" disabled>&#8592; Prev</button>
+        <span class="nav-date" id="nav-date-range"></span>
+        <button class="nav-btn" id="btn-next" disabled>Next &#8594;</button>
+      </div>
+    </header>
+
+    <div id="stale-banner">
+      &#9888; Sensor data may be stale &mdash; monitor was unreachable at last check
+    </div>
+
+    <p id="loading">Loading&hellip;</p>
+    <p id="no-data">No data available for this date.</p>
+
+    <div class="card hidden" id="card">
+      <div id="score-value">—</div>
+      <div class="score-label">Health Score</div>
+      <div id="breakdown"></div>
+      <div id="meta"></div>
+    </div>
+
+    <div id="map"></div>
+
+    <script define:vars={{ SCORES_BASE }}>
+      window.__SCORES_BASE__ = SCORES_BASE;
+    </script>
+
+    <script>
+      import L from "leaflet";
+      import "leaflet/dist/leaflet.css";
+
+      const BASE: string = (window as any).__SCORES_BASE__ ?? "";
+      const LAT = 45.433785;
+      const LNG = -122.515123;
+
+      const CATEGORY_META: Record<string, { label: string; color: string }> = {
+        moderate:      { label: "Moderate",                        color: "#facc15" },
+        usg:           { label: "Unhealthy for Sensitive Groups",  color: "#fb923c" },
+        unhealthy:     { label: "Unhealthy",                       color: "#f87171" },
+        veryUnhealthy: { label: "Very Unhealthy",                  color: "#c084fc" },
+        hazardous:     { label: "Hazardous",                       color: "#ef4444" },
+      };
+
+      function scoreColor(score: number): string {
+        if (score >= 90) return "#4ade80";
+        if (score >= 70) return "#a3e635";
+        if (score >= 50) return "#fb923c";
+        return "#f87171";
+      }
+
+      function formatPacificDate(dateStr: string): string {
+        // dateStr is YYYY-MM-DD in Pacific time
+        const [y, m, d] = dateStr.split("-").map(Number);
+        return new Date(y, m - 1, d).toLocaleDateString("en-US", {
+          month: "long", day: "numeric", year: "numeric",
+        });
+      }
+
+      function addDays(dateStr: string, n: number): string {
+        const d = new Date(`${dateStr}T12:00:00Z`);
+        d.setUTCDate(d.getUTCDate() + n);
+        return d.toISOString().slice(0, 10);
+      }
+
+      // ── State ──────────────────────────────────────────────────────────────
+      let manifest: { earliest: string; latest: string } | null = null;
+      let currentDate = "";
+      let mapCircle: L.Circle | null = null;
+      let leafletMap: L.Map | null = null;
+
+      // ── DOM refs ───────────────────────────────────────────────────────────
+      const elTitle     = document.getElementById("page-title")!;
+      const elNavRange  = document.getElementById("nav-date-range")!;
+      const elBtnPrev   = document.getElementById("btn-prev") as HTMLButtonElement;
+      const elBtnNext   = document.getElementById("btn-next") as HTMLButtonElement;
+      const elStale     = document.getElementById("stale-banner") as HTMLElement;
+      const elLoading   = document.getElementById("loading")!;
+      const elNoData    = document.getElementById("no-data")!;
+      const elCard      = document.getElementById("card")!;
+      const elScore     = document.getElementById("score-value")!;
+      const elBreakdown = document.getElementById("breakdown")!;
+      const elMeta      = document.getElementById("meta")!;
+
+      // ── Map init (runs once) ───────────────────────────────────────────────
+      function initMap() {
+        leafletMap = L.map("map", { zoomControl: true }).setView([LAT, LNG], 13);
+        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+          attribution:
+            '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+          maxZoom: 19,
+        }).addTo(leafletMap);
+        mapCircle = L.circle([LAT, LNG], {
+          radius: 500, color: "#4ade80", fillColor: "#4ade80",
+          fillOpacity: 0.35, weight: 2,
+        }).addTo(leafletMap);
+      }
+
+      // ── Render a loaded score ──────────────────────────────────────────────
+      function renderScore(data: any) {
+        elLoading.classList.add("hidden");
+        elNoData.style.display = "none";
+        elStale.style.display = "none";
+
+        // No-data day
+        if (data.healthScore === null) {
+          elCard.classList.add("hidden");
+          elNoData.style.display = "block";
+          if (mapCircle) mapCircle.setStyle({ color: "#475569", fillColor: "#475569" });
+          return;
+        }
+
+        elCard.classList.remove("hidden");
+
+        if (data.stale) elStale.style.display = "block";
+
+        const color = scoreColor(data.healthScore);
+        elScore.textContent = data.healthScore.toFixed(1);
+        (elScore as HTMLElement).style.color = color;
+        if (mapCircle) mapCircle.setStyle({ color, fillColor: color });
+
+        elBreakdown.innerHTML = "";
+        for (const [key, meta] of Object.entries(CATEGORY_META)) {
+          const mins = data.categories?.[key];
+          if (!mins) continue;
+          const row = document.createElement("div");
+          row.className = "breakdown-row";
+          row.innerHTML = `
+            <span class="breakdown-name">
+              <span class="breakdown-dot" style="background:${meta.color}"></span>
+              ${meta.label}
+            </span>
+            <span class="breakdown-mins">${mins} min</span>`;
+          elBreakdown.appendChild(row);
+        }
+
+        elMeta.innerHTML =
+          `Peak AQI: <strong>${data.peakAqi}</strong> &nbsp;&middot;&nbsp; ` +
+          `Avg PM2.5: <strong>${data.averagePm25} µg/m³</strong><br>` +
+          `Generated: ${new Date(data.generatedAt).toLocaleString("en-US", {
+            month: "short", day: "numeric", year: "numeric",
+            hour: "numeric", minute: "2-digit", timeZoneName: "short",
+          })}`;
+      }
+
+      // ── Load a specific date ───────────────────────────────────────────────
+      async function loadDate(date: string, pushState = true) {
+        currentDate = date;
+
+        if (pushState) {
+          const url = new URL(window.location.href);
+          url.searchParams.set("date", date);
+          history.pushState({ date }, "", url);
+        }
+
+        // Header
+        elTitle.textContent = `Outdoor AQI — ${formatPacificDate(date)}`;
+        elNavRange.textContent =
+          `${formatPacificDate(date)} (midnight–midnight Pacific)`;
+
+        // Nav button states
+        elBtnPrev.disabled = !manifest || date <= manifest.earliest;
+        elBtnNext.disabled = !manifest || date >= manifest.latest;
+
+        // Show loading state
+        elCard.classList.add("hidden");
+        elNoData.style.display = "none";
+        elStale.style.display = "none";
+        elLoading.classList.remove("hidden");
+
+        try {
+          const res = await fetch(`${BASE}/scores/${date}.json`);
+          if (res.status === 404) {
+            elLoading.classList.add("hidden");
+            elNoData.style.display = "block";
+            return;
+          }
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const data = await res.json();
+          elLoading.classList.add("hidden");
+          renderScore(data);
+        } catch {
+          elLoading.textContent = "Failed to load data for this date.";
+        }
+      }
+
+      // ── Navigation buttons ─────────────────────────────────────────────────
+      elBtnPrev.addEventListener("click", () => {
+        if (currentDate && manifest && currentDate > manifest.earliest) {
+          loadDate(addDays(currentDate, -1));
+        }
+      });
+
+      elBtnNext.addEventListener("click", () => {
+        if (currentDate && manifest && currentDate < manifest.latest) {
+          loadDate(addDays(currentDate, 1));
+        }
+      });
+
+      // Browser back/forward
+      window.addEventListener("popstate", (e) => {
+        const date = (e.state as any)?.date ?? manifest?.latest;
+        if (date) loadDate(date, false);
+      });
+
+      // ── Boot ───────────────────────────────────────────────────────────────
+      async function init() {
+        initMap();
+
+        // Load manifest
+        try {
+          const res = await fetch(`${BASE}/scores/manifest.json`);
+          if (res.ok) manifest = await res.json();
+        } catch {
+          // Manifest missing — degrade gracefully: nav buttons stay disabled
+        }
+
+        // Determine initial date from URL param or manifest latest
+        const urlDate = new URLSearchParams(window.location.search).get("date");
+        const initialDate = urlDate ?? manifest?.latest ?? "";
+
+        if (!initialDate) {
+          elLoading.textContent = "No score data available yet.";
+          return;
+        }
+
+        // Replace state (no extra history entry for initial load)
+        const url = new URL(window.location.href);
+        url.searchParams.set("date", initialDate);
+        history.replaceState({ date: initialDate }, "", url);
+
+        await loadDate(initialDate, false);
+      }
+
+      init();
+    </script>
+  </body>
+</html>

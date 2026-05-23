@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+site/node_modules/
+
+# Build output
+site/dist/
+site/.astro/
+
+# Environment — never commit real values
+.env
+.env.local
+.env.*.local
+
+# Runtime logs
+logs/
+
+# Generated score data — served from R2 in prod, regenerated locally by scripts
+site/public/latest.json
+site/public/scores/
+
+# macOS
+.DS_Store
+
+# Claude Code internals
+.claude/
+
+# Archived mac cron script (local-only reference)
+run.mac.sh
