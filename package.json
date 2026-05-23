@@ -6,7 +6,12 @@
   "engines": {
     "node": ">=24"
   },
+  "workspaces": [
+    "site"
+  ],
   "scripts": {
+    "dev": "npm run dev --workspace site",
+    "build": "npm run build --workspace site",
     "fetch": "tsx scripts/fetch-and-score.ts",
     "inspect": "tsx scripts/fetch-and-score.ts --inspect",
     "score": "tsx scripts/score-from-sqlite.ts",
