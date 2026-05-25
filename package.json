@@ -12,11 +12,11 @@
   "scripts": {
     "dev": "npm run dev --workspace site",
     "build": "npm run build --workspace site",
-    "fetch": "tsx scripts/fetch-and-score.ts",
-    "inspect": "tsx scripts/fetch-and-score.ts --inspect",
-    "score": "tsx scripts/score-from-sqlite.ts",
-    "backfill": "tsx scripts/backfill.ts",
-    "backfill-from-api": "tsx scripts/backfill-from-api.ts"
+    "fetch": "tsx --env-file=.env scripts/fetch-and-score.ts",
+    "inspect": "tsx --env-file=.env scripts/fetch-and-score.ts --inspect",
+    "score": "tsx --env-file=.env scripts/score-from-sqlite.ts",
+    "backfill": "tsx --env-file=.env scripts/backfill.ts",
+    "backfill-from-api": "tsx --env-file=.env scripts/backfill-from-api.ts"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

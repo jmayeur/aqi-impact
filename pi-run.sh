@@ -20,6 +20,6 @@ mkdir -p "$PROJECT/logs"
 echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] ── AQI scoring run started ──" >> "$LOG"
 
 cd "$PROJECT"
-node node_modules/.bin/tsx scripts/score-from-sqlite.ts >> "$LOG" 2>&1
+node node_modules/.bin/tsx --env-file=.env scripts/score-from-sqlite.ts >> "$LOG" 2>&1
 
 echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] ── Run complete ──" >> "$LOG"
