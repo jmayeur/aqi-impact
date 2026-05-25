@@ -15,7 +15,8 @@
     "fetch": "tsx scripts/fetch-and-score.ts",
     "inspect": "tsx scripts/fetch-and-score.ts --inspect",
     "score": "tsx scripts/score-from-sqlite.ts",
-    "backfill": "tsx scripts/backfill.ts"
+    "backfill": "tsx scripts/backfill.ts",
+    "backfill-from-api": "tsx scripts/backfill-from-api.ts"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
