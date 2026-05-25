@@ -159,22 +159,33 @@ function log(msg: string) {
   console.log(`[${new Date().toISOString()}] ${msg}`);
 }
 
-export async function scoreDay(date: string, dbPath: string, outDir: string) {
-  log(`Scoring ${date} from ${dbPath}`);
+interface ScoreDayOptions {
+  quiet?: boolean;        // suppress per-day log lines (useful when called from backfill)
+  skipManifest?: boolean; // skip manifest update (backfill writes it once at the end)
+}
+
+export async function scoreDay(
+  date: string,
+  dbPath: string,
+  outDir: string,
+  { quiet = false, skipManifest = false }: ScoreDayOptions = {}
+) {
+  const say = (msg: string) => { if (!quiet) log(msg); };
+
+  say(`Scoring ${date} from ${dbPath}`);
 
   const [startMs, endMs] = pacificDayBoundariesMs(date);
-  log(
+  say(
     `Pacific window: ${new Date(startMs).toISOString()} → ${new Date(endMs).toISOString()}`
   );
 
   const readings = queryDay(dbPath, startMs, endMs);
-  log(`Found ${readings.length} readings`);
+  say(`Found ${readings.length} readings`);
 
   mkdirSync(outDir, { recursive: true });
   const outFile = resolve(outDir, `${date}.json`);
 
   if (readings.length === 0) {
-    // No data for this day — write a null-score file so the UI can show "no data"
     writeFileSync(
       outFile,
       JSON.stringify(
@@ -183,14 +194,7 @@ export async function scoreDay(date: string, dbPath: string, outDir: string) {
           generatedAt: new Date().toISOString(),
           healthScore: null,
           totalMinutes: 0,
-          categories: {
-            good: 0,
-            moderate: 0,
-            usg: 0,
-            unhealthy: 0,
-            veryUnhealthy: 0,
-            hazardous: 0,
-          },
+          categories: { good: 0, moderate: 0, usg: 0, unhealthy: 0, veryUnhealthy: 0, hazardous: 0 },
           peakAqi: null,
           averagePm25: null,
         },
@@ -198,19 +202,21 @@ export async function scoreDay(date: string, dbPath: string, outDir: string) {
         2
       )
     );
-    log(`No readings for ${date} — wrote empty score file`);
+    say(`No readings for ${date} — wrote empty score file`);
   } else {
     const score = computeScore(readings);
     writeFileSync(
       outFile,
       JSON.stringify({ date, generatedAt: new Date().toISOString(), ...score }, null, 2)
     );
-    log(`Wrote ${outFile} (score=${score.healthScore})`);
+    say(`Wrote ${outFile} (score=${score.healthScore})`);
   }
 
-  const existing = readManifest(outDir);
-  writeManifest(outDir, date, existing);
-  log(`Updated manifest`);
+  if (!skipManifest) {
+    const existing = readManifest(outDir);
+    writeManifest(outDir, date, existing);
+    say(`Updated manifest`);
+  }
 }
 
 // Only run main() when invoked directly (not imported by backfill.ts)

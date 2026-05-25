@@ -112,20 +112,25 @@ async function main() {
 
   while (current <= toDate) {
     try {
-      await scoreDay(current, DB_PATH, OUT_DIR);
+      await scoreDay(current, DB_PATH, OUT_DIR, { quiet: true, skipManifest: true });
       processed++;
     } catch (err) {
+      // Print errors on their own line so they don't get overwritten by the progress bar
+      process.stdout.write("\n");
       console.error(`  ERROR on ${current}: ${(err as Error).message}`);
       errors++;
     }
 
     const pct = Math.round(((processed + errors) / totalDays) * 100);
-    process.stdout.write(`\r  Progress: ${processed + errors}/${totalDays} (${pct}%)  `);
+    process.stdout.write(
+      `\r  ${processed + errors}/${totalDays} (${pct}%) — ${current}  `
+    );
 
     current = addDays(current, 1);
   }
 
-  console.log(`\n\nBackfill complete: ${processed} scored, ${errors} errors`);
+  process.stdout.write("\n");
+  console.log(`\nBackfill complete: ${processed} scored, ${errors} errors`);
 
   // Write the authoritative final manifest covering the full range
   writeFinalManifest(OUT_DIR, fromDate, toDate);
