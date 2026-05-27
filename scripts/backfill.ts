@@ -60,10 +60,10 @@ function earliestDateInDb(dbPath: string): string {
   const db = new Database(dbPath, { readonly: true });
   try {
     const row = db
-      .prepare("SELECT MIN(time) as minTime FROM envdata")
+      .prepare("SELECT MIN(hour) as minTime FROM agg_envdata")
       .get() as { minTime: number } | undefined;
 
-    if (!row?.minTime) throw new Error("No data found in envdata table");
+    if (!row?.minTime) throw new Error("No data found in agg_envdata table");
 
     const isSeconds = row.minTime < 1e12;
     const epochMs = isSeconds ? row.minTime * 1000 : row.minTime;
