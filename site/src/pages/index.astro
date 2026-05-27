@@ -168,6 +168,20 @@ const SCORES_BASE = import.meta.env.PUBLIC_SCORES_BASE ?? "";
         margin-top: 0.5rem;
       }
 
+      .resolution-badge {
+        display: inline-block;
+        font-size: 0.65rem;
+        font-weight: 600;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: #94a3b8;
+        background: #1e293b;
+        border: 1px solid #334155;
+        border-radius: 0.35rem;
+        padding: 0.15rem 0.45rem;
+        margin-top: 0.5rem;
+      }
+
       /* ── Map ── */
       #map {
         width: 100%;
@@ -330,13 +344,18 @@ const SCORES_BASE = import.meta.env.PUBLIC_SCORES_BASE ?? "";
           elBreakdown.appendChild(row);
         }
 
+        const resolutionBadge = data.resolution === "hourly"
+          ? `<br><span class="resolution-badge" title="Based on hourly aggregates — minute-level data not available for this date">Hourly data</span>`
+          : "";
+
         elMeta.innerHTML =
           `Peak AQI: <strong>${data.peakAqi}</strong> &nbsp;&middot;&nbsp; ` +
           `Avg PM2.5: <strong>${data.averagePm25} µg/m³</strong><br>` +
           `Generated: ${new Date(data.generatedAt).toLocaleString("en-US", {
             month: "short", day: "numeric", year: "numeric",
             hour: "numeric", minute: "2-digit", timeZoneName: "short",
-          })}`;
+          })}` +
+          resolutionBadge;
       }
 
       // ── Load a specific date ───────────────────────────────────────────────

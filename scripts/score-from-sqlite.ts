@@ -4,6 +4,11 @@ import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { computeScore, type SensorReading } from "./aqi.ts";
 
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+export type DataTable = "envdata" | "agg_envdata";
+export type Resolution = "minute" | "hourly";
+
 // ── Arg / env parsing ─────────────────────────────────────────────────────────
 
 const args = process.argv.slice(2);
@@ -28,31 +33,22 @@ const DATE_ARG = getArg("--date"); // YYYY-MM-DD, default = yesterday Pacific
 
 // ── Pacific time helpers ──────────────────────────────────────────────────────
 
-/** Returns the Pacific calendar date string "YYYY-MM-DD" for a given UTC Date */
-function toPacificDateStr(utcDate: Date): string {
+export function toPacificDateStr(utcDate: Date): string {
   return utcDate.toLocaleDateString("en-CA", {
     timeZone: "America/Los_Angeles",
-  }); // en-CA gives YYYY-MM-DD format
+  });
 }
 
-/** Returns yesterday's Pacific calendar date as "YYYY-MM-DD" */
-function yesterdayPacific(): string {
-  const now = new Date();
-  // Subtract 24h from now to safely land in "yesterday" Pacific regardless of UTC offset
-  return toPacificDateStr(new Date(now.getTime() - 24 * 60 * 60 * 1000));
+export function yesterdayPacific(): string {
+  return toPacificDateStr(new Date(Date.now() - 24 * 60 * 60 * 1000));
 }
 
 /**
  * Returns [startMs, endMs) in milliseconds UTC for the given Pacific calendar day.
- * Correctly handles DST transitions — America/Los_Angeles offset is auto-detected.
+ * Correctly handles DST — America/Los_Angeles offset is auto-detected via Intl.
  */
-function pacificDayBoundariesMs(dateStr: string): [number, number] {
-  // Build "YYYY-MM-DDT00:00:00" and interpret it in the Pacific timezone
-  // by formatting a candidate UTC date in Pacific and comparing the date part.
-  // We do a binary search to find the exact UTC millisecond = Pacific midnight.
-
-  // Simpler approach: offset detection via Intl
-  const midnightApprox = new Date(`${dateStr}T08:00:00.000Z`); // ~Pacific midnight in winter
+export function pacificDayBoundariesMs(dateStr: string): [number, number] {
+  const midnightApprox = new Date(`${dateStr}T08:00:00.000Z`);
   const pacificParts = new Intl.DateTimeFormat("en-US", {
     timeZone: "America/Los_Angeles",
     year: "numeric",
@@ -68,7 +64,6 @@ function pacificDayBoundariesMs(dateStr: string): [number, number] {
   const pacificHour = parseInt(get("hour"), 10);
   const pacificMin = parseInt(get("minute"), 10);
 
-  // Adjust the approximate UTC midnight by however many hours/minutes off we are
   const offsetMs = (pacificHour * 60 + pacificMin) * 60 * 1000;
   const startMs = midnightApprox.getTime() - offsetMs;
   const endMs = startMs + 24 * 60 * 60 * 1000;
@@ -79,37 +74,47 @@ function pacificDayBoundariesMs(dateStr: string): [number, number] {
 // ── SQLite query ──────────────────────────────────────────────────────────────
 
 interface DbRow {
-  time: number;
+  t: number;  // aliased time column (works for both `time` and `hour`)
   P25: number;
 }
 
-function queryDay(dbPath: string, startMs: number, endMs: number): SensorReading[] {
+/**
+ * Query one Pacific day's readings from either table.
+ *
+ * envdata:     minute-level, time column = `time`
+ * agg_envdata: hourly aggregates, time column = `hour`
+ *              computeScore() infers ~60 min duration per row from the gaps,
+ *              so totalMinutes comes out correctly at ~1440 even with 24 rows.
+ */
+function queryDay(
+  dbPath: string,
+  startMs: number,
+  endMs: number,
+  table: DataTable
+): SensorReading[] {
+  const timeCol = table === "agg_envdata" ? "hour" : "time";
   const db = new Database(dbPath, { readonly: true });
+
   try {
     // Sample one row to detect timestamp unit (ms vs seconds)
     const sample = db
-      .prepare("SELECT time FROM envdata ORDER BY time DESC LIMIT 1")
-      .get() as { time: number } | undefined;
+      .prepare(`SELECT ${timeCol} AS t FROM ${table} ORDER BY ${timeCol} DESC LIMIT 1`)
+      .get() as { t: number } | undefined;
 
-    let qStart = startMs;
-    let qEnd = endMs;
-
-    if (sample && sample.time < 1e12) {
-      // Timestamps are in seconds
-      qStart = Math.floor(startMs / 1000);
-      qEnd = Math.floor(endMs / 1000);
-    }
+    const isSeconds = sample !== undefined && sample.t < 1e12;
+    const qStart = isSeconds ? Math.floor(startMs / 1000) : startMs;
+    const qEnd   = isSeconds ? Math.floor(endMs   / 1000) : endMs;
 
     const rows = db
       .prepare(
-        "SELECT time, P25 FROM envdata WHERE time >= ? AND time < ? ORDER BY time"
+        `SELECT ${timeCol} AS t, P25 FROM ${table}
+         WHERE ${timeCol} >= ? AND ${timeCol} < ?
+         ORDER BY ${timeCol}`
       )
       .all(qStart, qEnd) as DbRow[];
 
-    const isSeconds = sample && sample.time < 1e12;
-
     return rows.map((r) => ({
-      time: new Date(isSeconds ? r.time * 1000 : r.time).toISOString(),
+      time: new Date(isSeconds ? r.t * 1000 : r.t).toISOString(),
       p25: r.P25,
     }));
   } finally {
@@ -136,50 +141,39 @@ function readManifest(outDir: string): Manifest | null {
 
 function writeManifest(outDir: string, date: string, existing: Manifest | null) {
   const manifest: Manifest = {
-    earliest: existing
-      ? date < existing.earliest
-        ? date
-        : existing.earliest
-      : date,
-    latest: existing
-      ? date > existing.latest
-        ? date
-        : existing.latest
-      : date,
+    earliest: existing ? (date < existing.earliest ? date : existing.earliest) : date,
+    latest:   existing ? (date > existing.latest   ? date : existing.latest)   : date,
   };
-  writeFileSync(
-    resolve(outDir, "manifest.json"),
-    JSON.stringify(manifest, null, 2)
-  );
+  writeFileSync(resolve(outDir, "manifest.json"), JSON.stringify(manifest, null, 2));
 }
 
-// ── Main ─────────────────────────────────────────────────────────────────────
+// ── scoreDay ──────────────────────────────────────────────────────────────────
 
 function log(msg: string) {
   console.log(`[${new Date().toISOString()}] ${msg}`);
 }
 
-interface ScoreDayOptions {
-  quiet?: boolean;        // suppress per-day log lines (useful when called from backfill)
-  skipManifest?: boolean; // skip manifest update (backfill writes it once at the end)
+export interface ScoreDayOptions {
+  table?: DataTable;        // which DB table to read (default: "envdata")
+  quiet?: boolean;          // suppress per-day log lines
+  skipManifest?: boolean;   // skip manifest update (backfill writes once at the end)
 }
 
 export async function scoreDay(
   date: string,
   dbPath: string,
   outDir: string,
-  { quiet = false, skipManifest = false }: ScoreDayOptions = {}
+  { table = "envdata", quiet = false, skipManifest = false }: ScoreDayOptions = {}
 ) {
   const say = (msg: string) => { if (!quiet) log(msg); };
+  const resolution: Resolution = table === "agg_envdata" ? "hourly" : "minute";
 
-  say(`Scoring ${date} from ${dbPath}`);
+  say(`Scoring ${date} from ${table} (${resolution})`);
 
   const [startMs, endMs] = pacificDayBoundariesMs(date);
-  say(
-    `Pacific window: ${new Date(startMs).toISOString()} → ${new Date(endMs).toISOString()}`
-  );
+  say(`Pacific window: ${new Date(startMs).toISOString()} → ${new Date(endMs).toISOString()}`);
 
-  const readings = queryDay(dbPath, startMs, endMs);
+  const readings = queryDay(dbPath, startMs, endMs, table);
   say(`Found ${readings.length} readings`);
 
   mkdirSync(outDir, { recursive: true });
@@ -188,28 +182,30 @@ export async function scoreDay(
   if (readings.length === 0) {
     writeFileSync(
       outFile,
-      JSON.stringify(
-        {
-          date,
-          generatedAt: new Date().toISOString(),
-          healthScore: null,
-          totalMinutes: 0,
-          categories: { good: 0, moderate: 0, usg: 0, unhealthy: 0, veryUnhealthy: 0, hazardous: 0 },
-          peakAqi: null,
-          averagePm25: null,
-        },
-        null,
-        2
-      )
+      JSON.stringify({
+        date,
+        resolution,
+        generatedAt: new Date().toISOString(),
+        healthScore: null,
+        totalMinutes: 0,
+        categories: { good: 0, moderate: 0, usg: 0, unhealthy: 0, veryUnhealthy: 0, hazardous: 0 },
+        peakAqi: null,
+        averagePm25: null,
+      }, null, 2)
     );
     say(`No readings for ${date} — wrote empty score file`);
   } else {
     const score = computeScore(readings);
     writeFileSync(
       outFile,
-      JSON.stringify({ date, generatedAt: new Date().toISOString(), ...score }, null, 2)
+      JSON.stringify({
+        date,
+        resolution,
+        generatedAt: new Date().toISOString(),
+        ...score,
+      }, null, 2)
     );
-    say(`Wrote ${outFile} (score=${score.healthScore})`);
+    say(`Wrote ${outFile} (score=${score.healthScore}, resolution=${resolution})`);
   }
 
   if (!skipManifest) {
@@ -222,7 +218,8 @@ export async function scoreDay(
 // Only run main() when invoked directly (not imported by backfill.ts)
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const targetDate = DATE_ARG ?? yesterdayPacific();
-  scoreDay(targetDate, DB_PATH, OUT_DIR).catch((err) => {
+  // Daily cron always reads from envdata (minute-level)
+  scoreDay(targetDate, DB_PATH, OUT_DIR, { table: "envdata" }).catch((err) => {
     console.error("Error:", err);
     process.exit(1);
   });

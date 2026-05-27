@@ -11,7 +11,7 @@ import Database from "better-sqlite3";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { scoreDay } from "./score-from-sqlite.ts";
+import { scoreDay, type DataTable } from "./score-from-sqlite.ts";
 
 // ── Arg parsing ───────────────────────────────────────────────────────────────
 
@@ -31,6 +31,10 @@ const DB_PATH =
 
 const OUT_DIR =
   getArg("--out") ?? resolve(PROJECT_ROOT, "site/public/scores");
+
+// Dates before this cutover use agg_envdata (hourly); on/after use envdata (minute).
+// Override with --cutover YYYY-MM-DD if the aggregation boundary differs.
+const CUTOVER_DATE = getArg("--cutover") ?? "2026-05-26";
 
 // ── Date helpers ──────────────────────────────────────────────────────────────
 
@@ -112,7 +116,9 @@ async function main() {
 
   while (current <= toDate) {
     try {
-      await scoreDay(current, DB_PATH, OUT_DIR, { quiet: true, skipManifest: true });
+      // Pre-cutover: use hourly aggregates; on/after cutover: use minute-level data
+      const table: DataTable = current < CUTOVER_DATE ? "agg_envdata" : "envdata";
+      await scoreDay(current, DB_PATH, OUT_DIR, { table, quiet: true, skipManifest: true });
       processed++;
     } catch (err) {
       // Print errors on their own line so they don't get overwritten by the progress bar
