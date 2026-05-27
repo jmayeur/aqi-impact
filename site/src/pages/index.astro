@@ -182,6 +182,21 @@ const SCORES_BASE = import.meta.env.PUBLIC_SCORES_BASE ?? "";
         margin-top: 0.5rem;
       }
 
+      #weather {
+        font-size: 0.75rem;
+        color: var(--muted);
+        text-align: center;
+        margin-top: 0.75rem;
+        display: flex;
+        gap: 1.25rem;
+        justify-content: center;
+        flex-wrap: wrap;
+      }
+
+      .weather-item strong {
+        color: var(--text);
+      }
+
       /* ── Map ── */
       #map {
         width: 100%;
@@ -227,6 +242,7 @@ const SCORES_BASE = import.meta.env.PUBLIC_SCORES_BASE ?? "";
       <div id="score-value">—</div>
       <div class="score-label">Health Score</div>
       <div id="breakdown"></div>
+      <div id="weather"></div>
       <div id="meta"></div>
     </div>
 
@@ -290,6 +306,7 @@ const SCORES_BASE = import.meta.env.PUBLIC_SCORES_BASE ?? "";
       const elCard      = document.getElementById("card")!;
       const elScore     = document.getElementById("score-value")!;
       const elBreakdown = document.getElementById("breakdown")!;
+      const elWeather   = document.getElementById("weather")!;
       const elMeta      = document.getElementById("meta")!;
 
       // ── Map init (runs once) ───────────────────────────────────────────────
@@ -314,6 +331,7 @@ const SCORES_BASE = import.meta.env.PUBLIC_SCORES_BASE ?? "";
 
         // No-data day
         if (data.healthScore === null) {
+          elWeather.innerHTML = "";
           elCard.classList.add("hidden");
           elNoData.style.display = "block";
           if (mapCircle) mapCircle.setStyle({ color: "#475569", fillColor: "#475569" });
@@ -342,6 +360,23 @@ const SCORES_BASE = import.meta.env.PUBLIC_SCORES_BASE ?? "";
             </span>
             <span class="breakdown-mins">${mins} min</span>`;
           elBreakdown.appendChild(row);
+        }
+
+        // Weather row — only shown when temp/humidity data is present (historical hourly days)
+        elWeather.innerHTML = "";
+        if (data.tempHigh != null || data.tempLow != null) {
+          const tempStr = [
+            data.tempHigh != null ? `<strong>${data.tempHigh}°F</strong> high` : null,
+            data.tempLow  != null ? `<strong>${data.tempLow}°F</strong> low`  : null,
+          ].filter(Boolean).join(" · ");
+          elWeather.innerHTML += `<span class="weather-item">🌡 ${tempStr}</span>`;
+        }
+        if (data.humidityHigh != null || data.humidityLow != null) {
+          const humStr = [
+            data.humidityLow  != null ? `<strong>${data.humidityLow}%</strong> low`  : null,
+            data.humidityHigh != null ? `<strong>${data.humidityHigh}%</strong> high` : null,
+          ].filter(Boolean).join(" · ");
+          elWeather.innerHTML += `<span class="weather-item">💧 ${humStr}</span>`;
         }
 
         const resolutionBadge = data.resolution === "hourly"

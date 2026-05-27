@@ -2,7 +2,7 @@ import Database from "better-sqlite3";
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { computeScore, type SensorReading } from "./aqi.ts";
+import { computeScore, calculatePm25Aqi, type SensorReading } from "./aqi.ts";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -122,6 +122,77 @@ function queryDay(
   }
 }
 
+// ── Extras query (hourly path only) ──────────────────────────────────────────
+
+interface DayExtras {
+  peakP25: number | null;
+  tempHigh: number | null;
+  tempLow: number | null;
+  humidityHigh: number | null;
+  humidityLow: number | null;
+}
+
+/**
+ * For historical (agg_envdata) days, pull supplementary data in one DB open:
+ *   - True peak P25 from hourly_peak_envdata → more accurate peakAqi
+ *   - Daily temp/humidity high (from peak table) and low (from avg table)
+ */
+function queryDayExtras(
+  dbPath: string,
+  startMs: number,
+  endMs: number,
+): DayExtras {
+  const db = new Database(dbPath, { readonly: true });
+  try {
+    // Detect timestamp unit via agg_envdata (same epoch format across tables)
+    const sample = db
+      .prepare("SELECT hour AS t FROM agg_envdata ORDER BY hour DESC LIMIT 1")
+      .get() as { t: number } | undefined;
+
+    const isSeconds = sample !== undefined && sample.t < 1e12;
+    const qStart = isSeconds ? Math.floor(startMs / 1000) : startMs;
+    const qEnd   = isSeconds ? Math.floor(endMs   / 1000) : endMs;
+
+    // Peak P25, daily temp high, humidity high from the peak table
+    const peakRow = db
+      .prepare(
+        `SELECT MAX(P25) AS peakP25,
+                MAX(output_temp) AS tempHigh,
+                MAX(output_humidity) AS humidityHigh
+         FROM hourly_peak_envdata
+         WHERE hour >= ? AND hour < ?`
+      )
+      .get(qStart, qEnd) as {
+        peakP25: number | null;
+        tempHigh: number | null;
+        humidityHigh: number | null;
+      } | undefined;
+
+    // Daily temp low and humidity low from the hourly-average table
+    const avgRow = db
+      .prepare(
+        `SELECT MIN(output_temp) AS tempLow,
+                MIN(output_humidity) AS humidityLow
+         FROM agg_envdata
+         WHERE hour >= ? AND hour < ?`
+      )
+      .get(qStart, qEnd) as {
+        tempLow: number | null;
+        humidityLow: number | null;
+      } | undefined;
+
+    return {
+      peakP25:      peakRow?.peakP25 ?? null,
+      tempHigh:     peakRow?.tempHigh     != null ? Math.round(peakRow.tempHigh * 10) / 10 : null,
+      tempLow:      avgRow?.tempLow       != null ? Math.round(avgRow.tempLow   * 10) / 10 : null,
+      humidityHigh: peakRow?.humidityHigh != null ? Math.round(peakRow.humidityHigh)        : null,
+      humidityLow:  avgRow?.humidityLow   != null ? Math.round(avgRow.humidityLow)           : null,
+    };
+  } finally {
+    db.close();
+  }
+}
+
 // ── Manifest helpers ──────────────────────────────────────────────────────────
 
 interface Manifest {
@@ -179,6 +250,9 @@ export async function scoreDay(
   mkdirSync(outDir, { recursive: true });
   const outFile = resolve(outDir, `${date}.json`);
 
+  // For historical hourly days, fetch peak P25 + weather extras in one extra DB open
+  const extras = table === "agg_envdata" ? queryDayExtras(dbPath, startMs, endMs) : null;
+
   if (readings.length === 0) {
     writeFileSync(
       outFile,
@@ -191,11 +265,22 @@ export async function scoreDay(
         categories: { good: 0, moderate: 0, usg: 0, unhealthy: 0, veryUnhealthy: 0, hazardous: 0 },
         peakAqi: null,
         averagePm25: null,
+        tempHigh: extras?.tempHigh ?? null,
+        tempLow: extras?.tempLow ?? null,
+        humidityHigh: extras?.humidityHigh ?? null,
+        humidityLow: extras?.humidityLow ?? null,
       }, null, 2)
     );
     say(`No readings for ${date} — wrote empty score file`);
   } else {
     const score = computeScore(readings);
+
+    // Override peakAqi with the true hourly-peak value when available —
+    // hourly averages understate the real intra-hour spike.
+    const peakAqi = extras?.peakP25 != null
+      ? calculatePm25Aqi(extras.peakP25)
+      : score.peakAqi;
+
     writeFileSync(
       outFile,
       JSON.stringify({
@@ -203,9 +288,14 @@ export async function scoreDay(
         resolution,
         generatedAt: new Date().toISOString(),
         ...score,
+        peakAqi,
+        tempHigh: extras?.tempHigh ?? null,
+        tempLow: extras?.tempLow ?? null,
+        humidityHigh: extras?.humidityHigh ?? null,
+        humidityLow: extras?.humidityLow ?? null,
       }, null, 2)
     );
-    say(`Wrote ${outFile} (score=${score.healthScore}, resolution=${resolution})`);
+    say(`Wrote ${outFile} (score=${score.healthScore}, peakAqi=${peakAqi}, resolution=${resolution})`);
   }
 
   if (!skipManifest) {
