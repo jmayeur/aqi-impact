@@ -18,10 +18,17 @@ export async function onRequest({ params, env }) {
     return new Response("Not found", { status: 404 });
   }
 
+  // manifest.json changes daily — keep TTL short so updates flow through quickly.
+  // Individual date files are immutable once written — cache aggressively.
+  const filename = params.path.at(-1) ?? "";
+  const cacheControl = filename === "manifest.json"
+    ? "public, max-age=60"
+    : "public, max-age=86400, immutable";
+
   return new Response(obj.body, {
     headers: {
       "Content-Type": "application/json",
-      "Cache-Control": "public, max-age=3600",
+      "Cache-Control": cacheControl,
     },
   });
 }
