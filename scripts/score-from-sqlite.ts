@@ -193,6 +193,54 @@ function queryDayExtras(
   }
 }
 
+/**
+ * For minute-level (envdata) days, pull daily temp/humidity high/low directly
+ * from the same table. No peak table exists for recent data — computeScore()
+ * already gives an accurate peakAqi from the per-minute readings.
+ */
+function queryEnvdataWeather(
+  dbPath: string,
+  startMs: number,
+  endMs: number,
+): DayExtras {
+  const db = new Database(dbPath, { readonly: true });
+  try {
+    const sample = db
+      .prepare("SELECT time AS t FROM envdata ORDER BY time DESC LIMIT 1")
+      .get() as { t: number } | undefined;
+
+    const isSeconds = sample !== undefined && sample.t < 1e12;
+    const qStart = isSeconds ? Math.floor(startMs / 1000) : startMs;
+    const qEnd   = isSeconds ? Math.floor(endMs   / 1000) : endMs;
+
+    const row = db
+      .prepare(
+        `SELECT MAX(output_temp) AS tempHigh,
+                MIN(output_temp) AS tempLow,
+                MAX(output_humidity) AS humidityHigh,
+                MIN(output_humidity) AS humidityLow
+         FROM envdata
+         WHERE time >= ? AND time < ?`
+      )
+      .get(qStart, qEnd) as {
+        tempHigh: number | null;
+        tempLow: number | null;
+        humidityHigh: number | null;
+        humidityLow: number | null;
+      } | undefined;
+
+    return {
+      peakP25:      null,  // not needed — computeScore() is exact with minute data
+      tempHigh:     row?.tempHigh     != null ? Math.round(row.tempHigh     * 10) / 10 : null,
+      tempLow:      row?.tempLow      != null ? Math.round(row.tempLow      * 10) / 10 : null,
+      humidityHigh: row?.humidityHigh != null ? Math.round(row.humidityHigh)            : null,
+      humidityLow:  row?.humidityLow  != null ? Math.round(row.humidityLow)             : null,
+    };
+  } finally {
+    db.close();
+  }
+}
+
 // ── Manifest helpers ──────────────────────────────────────────────────────────
 
 interface Manifest {
@@ -250,8 +298,10 @@ export async function scoreDay(
   mkdirSync(outDir, { recursive: true });
   const outFile = resolve(outDir, `${date}.json`);
 
-  // For historical hourly days, fetch peak P25 + weather extras in one extra DB open
-  const extras = table === "agg_envdata" ? queryDayExtras(dbPath, startMs, endMs) : null;
+  // Fetch weather extras for both paths — hourly uses peak table, minute uses envdata directly
+  const extras = table === "agg_envdata"
+    ? queryDayExtras(dbPath, startMs, endMs)
+    : queryEnvdataWeather(dbPath, startMs, endMs);
 
   if (readings.length === 0) {
     writeFileSync(
