@@ -34,7 +34,7 @@ const OUT_DIR =
 
 // Dates before this cutover use agg_envdata (hourly); on/after use envdata (minute).
 // Override with --cutover YYYY-MM-DD if the aggregation boundary differs.
-const CUTOVER_DATE = getArg("--cutover") ?? "2026-05-26";
+const CUTOVER_DATE = getArg("--cutover") ?? "2026-05-28";
 
 // ── Date helpers ──────────────────────────────────────────────────────────────
 
