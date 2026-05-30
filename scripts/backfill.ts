@@ -80,10 +80,18 @@ function writeFinalManifest(
   earliest: string,
   latest: string
 ) {
-  writeFileSync(
-    resolve(outDir, "manifest.json"),
-    JSON.stringify({ earliest, latest }, null, 2)
-  );
+  // Merge with existing manifest so targeted re-runs don't narrow the range
+  const p = resolve(outDir, "manifest.json");
+  let existing: { earliest: string; latest: string } | null = null;
+  try {
+    existing = JSON.parse(readFileSync(p, "utf8"));
+  } catch { /* no existing manifest — that's fine */ }
+
+  const merged = {
+    earliest: existing ? (earliest < existing.earliest ? earliest : existing.earliest) : earliest,
+    latest:   existing ? (latest   > existing.latest   ? latest   : existing.latest)   : latest,
+  };
+  writeFileSync(p, JSON.stringify(merged, null, 2));
 }
 
 // ── Main ─────────────────────────────────────────────────────────────────────
