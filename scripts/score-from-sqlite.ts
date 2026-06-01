@@ -44,12 +44,13 @@ export function yesterdayPacific(): string {
 }
 
 /**
- * Returns [startMs, endMs) in milliseconds UTC for the given Pacific calendar day.
- * Correctly handles DST — America/Los_Angeles offset is auto-detected via Intl.
+ * Returns the UTC millisecond timestamp of midnight Pacific time for a given
+ * YYYY-MM-DD date string. Uses T08:00Z as the probe point (always within an
+ * hour of Pacific midnight regardless of DST offset).
  */
-export function pacificDayBoundariesMs(dateStr: string): [number, number] {
-  const midnightApprox = new Date(`${dateStr}T08:00:00.000Z`);
-  const pacificParts = new Intl.DateTimeFormat("en-US", {
+function pacificMidnightMs(dateStr: string): number {
+  const approx = new Date(`${dateStr}T08:00:00.000Z`);
+  const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: "America/Los_Angeles",
     year: "numeric",
     month: "2-digit",
@@ -57,17 +58,24 @@ export function pacificDayBoundariesMs(dateStr: string): [number, number] {
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
-  }).formatToParts(midnightApprox);
+  }).formatToParts(approx);
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "0";
+  const offsetMs =
+    (parseInt(get("hour"), 10) * 60 + parseInt(get("minute"), 10)) * 60_000;
+  return approx.getTime() - offsetMs;
+}
 
-  const get = (t: string) =>
-    pacificParts.find((p) => p.type === t)?.value ?? "0";
-  const pacificHour = parseInt(get("hour"), 10);
-  const pacificMin = parseInt(get("minute"), 10);
-
-  const offsetMs = (pacificHour * 60 + pacificMin) * 60 * 1000;
-  const startMs = midnightApprox.getTime() - offsetMs;
-  const endMs = startMs + 24 * 60 * 60 * 1000;
-
+/**
+ * Returns [startMs, endMs) in milliseconds UTC for the given Pacific calendar day.
+ * Handles DST correctly: spring-forward days are 23 hours, fall-back days 25 hours.
+ * endMs is computed independently (not startMs + 86400000) so DST transitions are exact.
+ */
+export function pacificDayBoundariesMs(dateStr: string): [number, number] {
+  const startMs = pacificMidnightMs(dateStr);
+  // Advance one calendar day at noon UTC (safe midpoint, never crosses a date boundary)
+  const nextDay = new Date(`${dateStr}T12:00:00Z`);
+  nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+  const endMs = pacificMidnightMs(nextDay.toISOString().slice(0, 10));
   return [startMs, endMs];
 }
 

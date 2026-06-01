@@ -8,7 +8,7 @@
  */
 
 import Database from "better-sqlite3";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { scoreDay, type DataTable } from "./score-from-sqlite.ts";
