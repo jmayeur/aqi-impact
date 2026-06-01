@@ -94,12 +94,18 @@ interface DbRow {
  *              computeScore() infers ~60 min duration per row from the gaps,
  *              so totalMinutes comes out correctly at ~1440 even with 24 rows.
  */
+const ALLOWED_TABLES = new Set<DataTable>(["envdata", "agg_envdata"]);
+
 function queryDay(
   dbPath: string,
   startMs: number,
   endMs: number,
   table: DataTable
 ): SensorReading[] {
+  // Runtime allowlist — TypeScript types catch this at compile time, but guard
+  // against any future refactor that bypasses the type system.
+  if (!ALLOWED_TABLES.has(table)) throw new Error(`Invalid table: ${table}`);
+
   const timeCol = table === "agg_envdata" ? "hour" : "time";
   const db = new Database(dbPath, { readonly: true });
 

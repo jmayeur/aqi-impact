@@ -24,6 +24,10 @@ function makeCtx(filename, env) {
   return { params: { path: [filename] }, env };
 }
 
+function makeCtxMultiSegment(segments, env) {
+  return { params: { path: segments }, env };
+}
+
 // ── validateFilename ──────────────────────────────────────────────────────────
 
 describe("validateFilename", () => {
@@ -147,5 +151,15 @@ describe("onRequest", () => {
     const env = makeEnv({ manifest: null });
     const res = await onRequest(makeCtx("2024-06-15.json", env));
     expect(res.status).toBe(503);
+  });
+
+  it("returns 403 for a multi-segment path (prevents reading arbitrary R2 key prefixes)", async () => {
+    const res = await onRequest(makeCtxMultiSegment(["subfolder", "2024-06-15.json"], makeEnv()));
+    expect(res.status).toBe(403);
+  });
+
+  it("includes X-Content-Type-Options: nosniff on successful responses", async () => {
+    const res = await onRequest(makeCtx("manifest.json", makeEnv()));
+    expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
   });
 });

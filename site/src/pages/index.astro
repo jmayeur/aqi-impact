@@ -275,6 +275,16 @@ const SCORES_BASE = import.meta.env.PUBLIC_SCORES_BASE ?? "";
         return "#f87171";
       }
 
+      /** Validates a YYYY-MM-DD date string from untrusted sources (URL params, history state). */
+      const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+      /** Safely converts an untrusted value to a display string.
+       *  Any non-finite result (NaN, Infinity, or non-number) renders as "—". */
+      function safeNum(v: unknown): string {
+        const n = Number(v);
+        return Number.isFinite(n) ? String(n) : "—";
+      }
+
       function formatPacificDate(dateStr: string): string {
         // dateStr is YYYY-MM-DD in Pacific time
         const [y, m, d] = dateStr.split("-").map(Number);
@@ -358,7 +368,7 @@ const SCORES_BASE = import.meta.env.PUBLIC_SCORES_BASE ?? "";
               <span class="breakdown-dot" style="background:${meta.color}"></span>
               ${meta.label}
             </span>
-            <span class="breakdown-mins">${mins} min</span>`;
+            <span class="breakdown-mins">${safeNum(mins)} min</span>`;
           elBreakdown.appendChild(row);
         }
 
@@ -366,15 +376,15 @@ const SCORES_BASE = import.meta.env.PUBLIC_SCORES_BASE ?? "";
         elWeather.innerHTML = "";
         if (data.tempHigh != null || data.tempLow != null) {
           const tempStr = [
-            data.tempHigh != null ? `<strong>${data.tempHigh}°F</strong> high` : null,
-            data.tempLow  != null ? `<strong>${data.tempLow}°F</strong> low`  : null,
+            data.tempHigh != null ? `<strong>${safeNum(data.tempHigh)}°F</strong> high` : null,
+            data.tempLow  != null ? `<strong>${safeNum(data.tempLow)}°F</strong> low`  : null,
           ].filter(Boolean).join(" · ");
           elWeather.innerHTML += `<span class="weather-item">🌡 ${tempStr}</span>`;
         }
         if (data.humidityHigh != null || data.humidityLow != null) {
           const humStr = [
-            data.humidityLow  != null ? `<strong>${data.humidityLow}%</strong> low`  : null,
-            data.humidityHigh != null ? `<strong>${data.humidityHigh}%</strong> high` : null,
+            data.humidityLow  != null ? `<strong>${safeNum(data.humidityLow)}%</strong> low`  : null,
+            data.humidityHigh != null ? `<strong>${safeNum(data.humidityHigh)}%</strong> high` : null,
           ].filter(Boolean).join(" · ");
           elWeather.innerHTML += `<span class="weather-item">💧 ${humStr}</span>`;
         }
@@ -384,8 +394,8 @@ const SCORES_BASE = import.meta.env.PUBLIC_SCORES_BASE ?? "";
           : "";
 
         elMeta.innerHTML =
-          `Peak AQI: <strong>${data.peakAqi}</strong> &nbsp;&middot;&nbsp; ` +
-          `Avg PM2.5: <strong>${data.averagePm25} µg/m³</strong><br>` +
+          `Peak AQI: <strong>${safeNum(data.peakAqi)}</strong> &nbsp;&middot;&nbsp; ` +
+          `Avg PM2.5: <strong>${safeNum(data.averagePm25)} µg/m³</strong><br>` +
           `Generated: ${new Date(data.generatedAt).toLocaleString("en-US", {
             month: "short", day: "numeric", year: "numeric",
             hour: "numeric", minute: "2-digit", timeZoneName: "short",
@@ -449,7 +459,8 @@ const SCORES_BASE = import.meta.env.PUBLIC_SCORES_BASE ?? "";
 
       // Browser back/forward
       window.addEventListener("popstate", (e) => {
-        const date = (e.state as any)?.date ?? manifest?.latest;
+        const raw = (e.state as any)?.date ?? manifest?.latest;
+        const date = raw && DATE_RE.test(raw) ? raw : manifest?.latest;
         if (date) loadDate(date, false);
       });
 
@@ -465,8 +476,12 @@ const SCORES_BASE = import.meta.env.PUBLIC_SCORES_BASE ?? "";
           // Manifest missing — degrade gracefully: nav buttons stay disabled
         }
 
-        // Determine initial date from URL param or manifest latest
-        const urlDate = new URLSearchParams(window.location.search).get("date");
+        // Determine initial date from URL param or manifest latest.
+        // Validate the param against YYYY-MM-DD before using it to prevent
+        // an attacker-crafted URL from injecting unexpected characters into
+        // the fetch path or history state.
+        const rawUrlDate = new URLSearchParams(window.location.search).get("date");
+        const urlDate = rawUrlDate && DATE_RE.test(rawUrlDate) ? rawUrlDate : null;
         const initialDate = urlDate ?? manifest?.latest ?? "";
 
         if (!initialDate) {

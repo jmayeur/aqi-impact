@@ -6,7 +6,7 @@
  *   R2 bucket:    aqi-scores
  *
  * Validation:
- *   403 — filename is not manifest.json or a valid YYYY-MM-DD.json
+ *   403 — path has more than one segment, or filename is not manifest.json / YYYY-MM-DD.json
  *   400 — date is outside the manifest's earliest/latest range
  *   404 — object absent from R2 (valid request but no data for that day)
  *   503 — manifest itself is missing (R2 not yet populated)
@@ -40,7 +40,14 @@ export function isDateInRange(date, earliest, latest) {
 }
 
 export async function onRequest({ params, env }) {
-  const filename = params.path?.at(-1) ?? "";
+  // Reject multi-segment paths — only a single flat filename is ever valid.
+  // Without this, /scores/foo/2026-05-01.json would pass filename validation
+  // but build the key "scores/foo/2026-05-01.json", potentially reading arbitrary prefixes.
+  if (!params.path || params.path.length !== 1) {
+    return new Response("Forbidden", { status: 403 });
+  }
+
+  const filename = params.path[0];
   const parsed = validateFilename(filename);
 
   if (!parsed) {
@@ -60,7 +67,7 @@ export async function onRequest({ params, env }) {
     }
   }
 
-  const key = `scores/${params.path.join("/")}`;
+  const key = `scores/${filename}`;
   const obj = await env.SCORES.get(key);
   if (!obj?.body) {
     return new Response("Not found", { status: 404 });
@@ -75,6 +82,7 @@ export async function onRequest({ params, env }) {
     headers: {
       "Content-Type": "application/json",
       "Cache-Control": cacheControl,
+      "X-Content-Type-Options": "nosniff",
     },
   });
 }
