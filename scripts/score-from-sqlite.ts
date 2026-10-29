@@ -2,7 +2,13 @@ import Database from "better-sqlite3";
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { computeScore, calculatePm25Aqi, type SensorReading } from "./aqi.ts";
+import {
+  computeScore,
+  calculatePm25Aqi,
+  epaCorrectedPm25,
+  type SensorReading,
+  type Pm25Correction,
+} from "./aqi.ts";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -84,7 +90,11 @@ export function pacificDayBoundariesMs(dateStr: string): [number, number] {
 interface DbRow {
   t: number;  // aliased time column (works for both `time` and `hour`)
   P25: number;
+  rh: number | null; // the sensor's own (uncorrected) RH
 }
+
+// Longest gap a single reading is credited with; anything longer is an outage
+const MAX_GAP_MINUTES: Record<Resolution, number> = { minute: 5, hourly: 90 };
 
 /**
  * Query one Pacific day's readings from either table.
@@ -121,7 +131,7 @@ function queryDay(
 
     const rows = db
       .prepare(
-        `SELECT ${timeCol} AS t, P25 FROM ${table}
+        `SELECT ${timeCol} AS t, P25, raw_humidity AS rh FROM ${table}
          WHERE ${timeCol} >= ? AND ${timeCol} < ?
          ORDER BY ${timeCol}`
       )
@@ -130,6 +140,7 @@ function queryDay(
     return rows.map((r) => ({
       time: new Date(isSeconds ? r.t * 1000 : r.t).toISOString(),
       p25: r.P25,
+      ...(r.rh != null ? { rh: r.rh } : {}),
     }));
   } finally {
     db.close();
@@ -140,6 +151,7 @@ function queryDay(
 
 interface DayExtras {
   peakP25: number | null;
+  peakRh: number | null;     // raw RH for the hour of the peak, for the EPA correction
   tempHigh: number | null;
   tempLow: number | null;
   humidityHigh: number | null;
@@ -167,20 +179,28 @@ function queryDayExtras(
     const qStart = isSeconds ? Math.floor(startMs / 1000) : startMs;
     const qEnd   = isSeconds ? Math.floor(endMs   / 1000) : endMs;
 
-    // Peak P25, daily temp high, humidity high from the peak table
+    // Daily temp high, humidity high from the peak table
     const peakRow = db
       .prepare(
-        `SELECT MAX(P25) AS peakP25,
-                MAX(output_temp) AS tempHigh,
+        `SELECT MAX(output_temp) AS tempHigh,
                 MAX(output_humidity) AS humidityHigh
          FROM hourly_peak_envdata
          WHERE hour >= ? AND hour < ?`
       )
       .get(qStart, qEnd) as {
-        peakP25: number | null;
         tempHigh: number | null;
         humidityHigh: number | null;
       } | undefined;
+
+    // Peak P25 with that hour's raw RH (from the hourly-average table)
+    const peakP25Row = db
+      .prepare(
+        `SELECT p.P25 AS peakP25, a.raw_humidity AS peakRh
+         FROM hourly_peak_envdata p LEFT JOIN agg_envdata a ON a.hour = p.hour
+         WHERE p.hour >= ? AND p.hour < ?
+         ORDER BY p.P25 DESC LIMIT 1`
+      )
+      .get(qStart, qEnd) as { peakP25: number | null; peakRh: number | null } | undefined;
 
     // Daily temp low and humidity low from the hourly-average table
     const avgRow = db
@@ -196,7 +216,8 @@ function queryDayExtras(
       } | undefined;
 
     return {
-      peakP25:      peakRow?.peakP25 ?? null,
+      peakP25:      peakP25Row?.peakP25 ?? null,
+      peakRh:       peakP25Row?.peakRh ?? null,
       tempHigh:     peakRow?.tempHigh     != null ? Math.round(peakRow.tempHigh * 10) / 10 : null,
       tempLow:      avgRow?.tempLow       != null ? Math.round(avgRow.tempLow   * 10) / 10 : null,
       humidityHigh: peakRow?.humidityHigh != null ? Math.round(peakRow.humidityHigh)        : null,
@@ -245,6 +266,7 @@ function queryEnvdataWeather(
 
     return {
       peakP25:      null,  // not needed — computeScore() is exact with minute data
+      peakRh:       null,
       tempHigh:     row?.tempHigh     != null ? Math.round(row.tempHigh     * 10) / 10 : null,
       tempLow:      row?.tempLow      != null ? Math.round(row.tempLow      * 10) / 10 : null,
       humidityHigh: row?.humidityHigh != null ? Math.round(row.humidityHigh)            : null,
@@ -337,13 +359,25 @@ export async function scoreDay(
     );
     say(`No readings for ${date} — wrote empty score file`);
   } else {
-    const score = computeScore(readings);
+    // EPA-correct whenever the day has the sensor's RH throughout (the first days
+    // of 2022 have PM but no BME280 data)
+    const correction: Pm25Correction = readings.every((r) => r.rh != null) ? "epa" : "none";
+    const score = computeScore(readings, new Date(), {
+      correction,
+      maxGapMinutes: MAX_GAP_MINUTES[resolution],
+    });
+    // The first reading mirrors the second gap, so a full day can come out a minute over
+    const coverage = Math.min(1, Math.round((score.totalMinutes / ((endMs - startMs) / 60_000)) * 1000) / 1000);
 
     // Override peakAqi with the true hourly-peak value when available —
     // hourly averages understate the real intra-hour spike.
-    const peakAqi = extras?.peakP25 != null
-      ? calculatePm25Aqi(extras.peakP25)
-      : score.peakAqi;
+    let peakAqi = score.peakAqi;
+    if (extras?.peakP25 != null) {
+      const peakP25 = correction === "epa" && extras.peakRh != null
+        ? epaCorrectedPm25(extras.peakP25, extras.peakRh)
+        : extras.peakP25;
+      peakAqi = calculatePm25Aqi(peakP25);
+    }
 
     writeFileSync(
       outFile,
@@ -352,6 +386,7 @@ export async function scoreDay(
         resolution,
         generatedAt: new Date().toISOString(),
         ...score,
+        coverage,
         peakAqi,
         tempHigh: extras?.tempHigh ?? null,
         tempLow: extras?.tempLow ?? null,

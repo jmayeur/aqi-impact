@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { calculatePm25Aqi, categorizeAqi, computeScore } from "./aqi.ts";
+import { calculatePm25Aqi, categorizeAqi, computeScore, epaCorrectedPm25 } from "./aqi.ts";
 
 // ── calculatePm25Aqi ──────────────────────────────────────────────────────────
 
@@ -157,5 +157,65 @@ describe("computeScore", () => {
     expect(result.categories.moderate).toBeGreaterThan(0);
     expect(result.healthScore).toBeGreaterThan(0);
     expect(result.healthScore).toBeLessThan(100);
+  });
+});
+
+// ── epaCorrectedPm25 ──────────────────────────────────────────────────────────
+
+describe("epaCorrectedPm25", () => {
+  it("matches the Barkjohn 2021 equation below 30 µg/m³", () => {
+    // 0.524 * 20 - 0.0862 * 50 + 5.75
+    expect(epaCorrectedPm25(20, 50)).toBeCloseTo(11.92, 2);
+  });
+
+  it("uses the high-concentration fit above 260 µg/m³", () => {
+    // 2.966 + 0.69 * 300 + 8.84e-4 * 300^2
+    expect(epaCorrectedPm25(300, 50)).toBeCloseTo(289.526, 2);
+  });
+
+  it.each([30, 50, 210, 260])("is continuous at the %d µg/m³ breakpoint", (x) => {
+    expect(epaCorrectedPm25(x - 1e-9, 40)).toBeCloseTo(epaCorrectedPm25(x, 40), 4);
+  });
+
+  it("never goes negative in clean, humid air", () => {
+    expect(epaCorrectedPm25(0, 95)).toBe(0);
+  });
+
+  it("clamps RH to 0–100", () => {
+    expect(epaCorrectedPm25(10, 120)).toBe(epaCorrectedPm25(10, 100));
+  });
+});
+
+// ── computeScore options ──────────────────────────────────────────────────────
+
+describe("computeScore options", () => {
+  const minutes = (n: number, start = 0) =>
+    Array.from({ length: n }, (_, i) => new Date(Date.UTC(2026, 0, 1, 0, start + i)).toISOString());
+
+  it("applies the EPA correction when asked", () => {
+    const readings = minutes(10).map((time) => ({ time, p25: 20, rh: 50 }));
+    const score = computeScore(readings, new Date(), { correction: "epa" });
+    expect(score.pm25Correction).toBe("epa");
+    expect(score.averagePm25).toBeCloseTo(11.9, 1);
+    // 20 µg/m³ raw is Moderate, 11.9 corrected is still Moderate (> 9.0)
+    expect(score.categories.moderate).toBe(10);
+  });
+
+  it("requires rh on every reading for the EPA correction", () => {
+    const readings = minutes(3).map((time) => ({ time, p25: 5 }));
+    expect(() => computeScore(readings, new Date(), { correction: "epa" })).toThrow();
+  });
+
+  it("does not credit an outage to the reading that ends it", () => {
+    // 10 good minutes, a 6-hour outage, then one moderate reading
+    const readings = [
+      ...minutes(10).map((time) => ({ time, p25: 3 })),
+      { time: new Date(Date.UTC(2026, 0, 1, 6, 10)).toISOString(), p25: 20 },
+    ];
+    const uncapped = computeScore(readings);
+    const capped = computeScore(readings, new Date(), { maxGapMinutes: 5 });
+    expect(uncapped.categories.moderate).toBe(361);
+    expect(capped.categories.moderate).toBe(5);
+    expect(capped.totalMinutes).toBe(15);
   });
 });
