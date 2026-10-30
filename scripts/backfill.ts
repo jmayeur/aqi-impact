@@ -11,7 +11,7 @@ import Database from "better-sqlite3";
 import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { scoreDay, type DataTable } from "./score-from-sqlite.ts";
+import { scoreDay, pacificDayBoundariesMs, type DataTable } from "./score-from-sqlite.ts";
 
 // ── Arg parsing ───────────────────────────────────────────────────────────────
 
@@ -32,9 +32,10 @@ const DB_PATH =
 const OUT_DIR =
   getArg("--out") ?? resolve(PROJECT_ROOT, "site/public/scores");
 
-// Dates before this cutover use agg_envdata (hourly); on/after use envdata (minute).
-// Override with --cutover YYYY-MM-DD if the aggregation boundary differs.
-const CUTOVER_DATE = getArg("--cutover") ?? "2026-05-28";
+// Dates before the cutover use agg_envdata (hourly); on/after use envdata (minute).
+// Defaults to the first Pacific day fully covered by minute data; override with
+// --cutover YYYY-MM-DD.
+const CUTOVER_ARG = getArg("--cutover");
 
 // ── Date helpers ──────────────────────────────────────────────────────────────
 
@@ -73,6 +74,23 @@ function earliestDateInDb(dbPath: string): string {
   }
 }
 
+/** First Pacific date whose whole day is covered by envdata (minute) rows */
+function firstFullMinuteDate(dbPath: string): string {
+  const db = new Database(dbPath, { readonly: true });
+  try {
+    const row = db.prepare("SELECT MIN(time) as minTime FROM envdata").get() as
+      { minTime: number | null } | undefined;
+    if (!row?.minTime) return "9999-12-31"; // no minute data: score everything hourly
+
+    const firstMs = row.minTime < 1e12 ? row.minTime * 1000 : row.minTime;
+    let date = toPacificDateStr(new Date(firstMs));
+    if (pacificDayBoundariesMs(date)[0] < firstMs) date = addDays(date, 1);
+    return date;
+  } finally {
+    db.close();
+  }
+}
+
 // ── Manifest (final write after all days processed) ───────────────────────────
 
 function writeFinalManifest(
@@ -103,7 +121,8 @@ async function main() {
 
   console.log(`Detecting earliest DB date from ${DB_PATH}...`);
   let fromDate = getArg("--from") ?? earliestDateInDb(DB_PATH);
-  console.log(`Backfill range: ${fromDate} → ${toDate}`);
+  const cutoverDate = CUTOVER_ARG ?? firstFullMinuteDate(DB_PATH);
+  console.log(`Backfill range: ${fromDate} → ${toDate} (minute data from ${cutoverDate})`);
 
   if (fromDate > toDate) {
     console.log("Nothing to backfill (from > to).");
@@ -125,7 +144,7 @@ async function main() {
   while (current <= toDate) {
     try {
       // Pre-cutover: use hourly aggregates; on/after cutover: use minute-level data
-      const table: DataTable = current < CUTOVER_DATE ? "agg_envdata" : "envdata";
+      const table: DataTable = current < cutoverDate ? "agg_envdata" : "envdata";
       await scoreDay(current, DB_PATH, OUT_DIR, { table, quiet: true, skipManifest: true });
       processed++;
     } catch (err) {
